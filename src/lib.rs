@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct Node<T> {
     key: Vec<u32>,
     pub value: Option<T>,
@@ -84,6 +85,7 @@ impl<T> Node<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct Tree<T> {
     root: Option<Box<Node<T>>>,
 }
@@ -293,5 +295,10 @@ mod tests {
         assert!(bar.value == Some(1));
         assert!(bar.sibling.is_none());
         assert!(bar.child.is_none());
+    }
+
+    #[test]
+    fn test_fmt_debug() {
+        println!("{:?}", sample_tree());
     }
 }
