@@ -125,13 +125,10 @@ impl Tree {
         self.root.as_ref().and_then(|x| x.find(key))
     }
 
-    pub fn append<K: AsRef<[u32]>>(&self, key: K) -> Tree {
-        Tree {
-            root: match self.root {
-                Some(ref root) => Some(Rc::new(root.append(key))),
-                _ => Some(Node::boxed(key.as_ref(), 1u32))
-            },
-            header: vec![],
+    pub fn append<K: AsRef<[u32]>>(&mut self, key: K) {
+        self.root = match self.root {
+            Some(ref root) => Some(Rc::new(root.append(key))),
+            _ => Some(Node::boxed(key.as_ref(), 1u32)),
         }
     }
 }
@@ -212,7 +209,7 @@ mod tests {
     #[test]
     fn test_insert_empty() {
         let mut t = Tree::new();
-        t = t.append(vec![999u32]);
+        t.append(vec![999u32]);
         let root = t.root.as_ref().unwrap();
         assert!(root.key == vec![999u32]);
         assert!(root.value == Some(1));
@@ -223,9 +220,9 @@ mod tests {
     #[test]
     fn test_insert_append() {
         let mut t = Tree::new();
-        t = t.append(vec![3u32]);
-        t = t.append(vec![3u32, 137u32]);
-        t = t.append(vec![3u32, 137u32, 2u32]);
+        t.append(vec![3u32]);
+        t.append(vec![3u32, 137u32]);
+        t.append(vec![3u32, 137u32, 2u32]);
         let foo = t.root.as_ref().unwrap();
         assert!(foo.key == vec![3u32]);
         assert!(foo.value == Some(3));
@@ -244,9 +241,9 @@ mod tests {
     #[test]
     fn test_insert_sibling() {
         let mut t = Tree::new();
-        t = t.append(vec![987u32]);
-        t = t.append(vec![654u32]);
-        t = t.append(vec![321u32]);
+        t.append(vec![987u32]);
+        t.append(vec![654u32]);
+        t.append(vec![321u32]);
         let foo = t.root.as_ref().unwrap();
         assert!(foo.key == vec![987u32]);
         assert!(foo.value == Some(1));
@@ -265,9 +262,9 @@ mod tests {
     #[test]
     fn test_insert_split() {
         let mut t = Tree::new();
-        t = t.append(vec![3u32, 137u32, 2u32]);
+        t.append(vec![3u32, 137u32, 2u32]);
         println!("test_insert_split/pre: {:?}", t);
-        t = t.append(vec![3u32, 137u32, 99u32, 22u32]);
+        t.append(vec![3u32, 137u32, 99u32, 22u32]);
         println!("test_insert_split/post: {:?}", t);
         let root = t.root.as_ref().unwrap();
         assert!(root.key == vec![3u32, 137u32]);
@@ -292,8 +289,8 @@ mod tests {
     #[test]
     fn test_insert_twice() {
         let mut t = Tree::new();
-        t = t.append(vec![3u32, 137u32, 2u32]);
-        t = t.append(vec![3u32, 137u32, 2u32]);
+        t.append(vec![3u32, 137u32, 2u32]);
+        t.append(vec![3u32, 137u32, 2u32]);
         let root = t.root.as_ref().unwrap();
         assert!(root.key == vec![3u32, 137u32, 2u32]);
         assert!(root.value == Some(2));
@@ -306,25 +303,25 @@ mod tests {
         // 8: 8 times, 6: 5 times, 2: 5 times, 9: 4 times, 5: 4 times,
         // 4: 4 times, 1: 4 times, 0: 4 times, 7: 3 times, 3: 2 times
         println!("NEW Apriori sample tree:\n{:?}", t);
-        t = t.append(vec![8, 5, 1, 3]);
+        t.append(vec![8, 5, 1, 3]);
         println!("+ [8, 5, 1, 3] => {:?}", t);
-        t = t.append(vec![6, 2, 4, 7]);
+        t.append(vec![6, 2, 4, 7]);
         println!("+ [6, 2, 4, 7] => {:?}", t);
-        t = t.append(vec![8, 6, 2, 5, 4, 1]);
+        t.append(vec![8, 6, 2, 5, 4, 1]);
         println!("+ [8, 6, 2, 5, 4, 1] => {:?}", t);
-        t = t.append(vec![2, 8, 4, 0, 7]);
+        t.append(vec![2, 8, 4, 0, 7]);
         println!("+ [2, 8, 4, 0, 7] => {:?}", t);
-        t = t.append(vec![8, 6, 2, 0]);
+        t.append(vec![8, 6, 2, 0]);
         println!("+ [8, 6, 2, 0] => {:?}", t);
-        t = t.append(vec![6, 8, 4, 1]);
+        t.append(vec![6, 8, 4, 1]);
         println!("+ [6, 8, 4, 1] => {:?}", t);
-        t = t.append(vec![8, 5, 0]);
+        t.append(vec![8, 5, 0]);
         println!("+ [8, 5, 0] => {:?}", t);
-        t = t.append(vec![8, 6, 5, 0, 3]);
+        t.append(vec![8, 6, 5, 0, 3]);
         println!("+ [8, 6, 5, 0, 3] => {:?}", t);
-        t = t.append(vec![8, 2]);
+        t.append(vec![8, 2]);
         println!("+ [8, 2] => {:?}", t);
-        t = t.append(vec![1, 7]);
+        t.append(vec![1, 7]);
         println!("+ [1, 7] => {:?}", t);
         t
     }
