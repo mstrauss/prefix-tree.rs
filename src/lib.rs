@@ -1,9 +1,12 @@
+use std::rc::Rc;
+
 #[derive(Debug)]
 pub struct Node<T> {
     key: Vec<u32>,
     pub value: Option<T>,
-    child: Option<Box<Node<T>>>,
-    sibling: Option<Box<Node<T>>>,
+    child: Option<Rc<Node<T>>>,
+    sibling: Option<Rc<Node<T>>>,
+    next: Option<Rc<Node<T>>>
 }
 
 impl<T> Node<T> {
@@ -13,11 +16,12 @@ impl<T> Node<T> {
             value: Some(value),
             child: None,
             sibling: None,
+            next: None,
         }
     }
 
-    fn boxed<K: Into<Vec<u32>>>(key: K, value: T) -> Box<Node<T>> {
-        Box::new(Self::new(key, value))
+    fn boxed<K: Into<Vec<u32>>>(key: K, value: T) -> Rc<Node<T>> {
+        Rc::new(Self::new(key, value))
     }
 
     fn common_prefix<K: AsRef<[u32]>>(&self, other: K) -> usize {
@@ -42,120 +46,129 @@ impl<T> Node<T> {
             None
         }
     }
+}
 
-    pub fn find_mut<K: AsRef<[u32]>>(&mut self, key: K) -> Option<&mut Node<T>> {
-        let key = key.as_ref();
-        let prefix = self.common_prefix(key);
-        if prefix == 0 {
-            self.sibling.as_mut().and_then(|x| x.find_mut(key))
-        } else if prefix == self.key.len() {
-            if prefix == key.len() {
-                Some(self)
-            } else {
-                self.child.as_mut().and_then(|x| x.find_mut(&key[prefix..]))
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn insert<K: AsRef<[u32]>>(&mut self, key: K, value: T) {
-        let key = key.as_ref();
-        let prefix = self.common_prefix(key);
-        if prefix == 0 {
-            match self.sibling {
-                Some(ref mut sibling) => sibling.insert(key, value),
-                _ => self.sibling = Some(Self::boxed(key, value)),
-            }
-        } else if prefix < key.len() {
-            if prefix < self.key.len() {
-                self.child = Some(Box::new(Node {
-                    key: self.key.split_off(prefix),
-                    value: self.value.take(),
-                    child: self.child.take(),
-                    sibling: None,
-                }));
-                self.key.shrink_to_fit()
-            }
-            match self.child {
-                Some(ref mut child) => child.insert(&key[prefix..], value),
-                _ => self.child = Some(Self::boxed(&key[prefix..], value)),
-            }
-        }
-    }
+enum AppendType {
+    SameNode,
+    NewStraightChild,
+    NewGayChild,
+    NewSibling,
 }
 
 impl Node<u32> {
-    pub fn insert_and_count<K: AsRef<[u32]>>(&mut self, key: K) {
-        let key = key.as_ref();
-        let prefix = self.common_prefix(key);
+    pub fn append<K: AsRef<[u32]>>(&self, key: K) -> Node<u32> {
+        let prefix = self.common_prefix(key.as_ref());
+        let key = key.as_ref().to_vec();
+        // if prefix == 0 {
+        //     match self.sibling {
+        //         Some(ref sibling) => sibling.insert_and_count(key),
+        //         _ => self.sibling = Some(Self::boxed(key, 1u32)),
+        //     }
+        // } else if prefix < key.len() {
+        //     let mut old_count = 1u32;
+        //     if prefix < self.key.len() {
+        //         old_count = self.value.unwrap();
+        //         self.child = Some(Rc::new(Node {
+        //             key: self.key.split_off(prefix),
+        //             value: self.value.take(),
+        //             child: self.child.take(),
+        //             sibling: None,
+        //             next: None,
+        //         }));
+        //         self.key.shrink_to_fit()
+        //     }
+        //     match self.child {
+        //         Some(ref child) => child.insert_and_count(&key[prefix..]),
+        //         _ => self.child = Some(Self::boxed(&key[prefix..], 1u32)),
+        //     }
+        //     // update self-count
+        //     self.value = Some(self.value.unwrap_or(old_count) + 1u32);
+        // } else {
+        //     // same node!  increment count
+        //     match self.value {
+        //         Some(count) => self.value = Some(count + 1u32),
+        //         _ => panic!("self.value may not be missing"),
+        //     }
+        // };
+        let state;
         if prefix == 0 {
-            match self.sibling {
-                Some(ref mut sibling) => sibling.insert_and_count(key),
-                _ => self.sibling = Some(Self::boxed(key, 1u32)),
-            }
+            state = AppendType::NewSibling;
         } else if prefix < key.len() {
-            let mut old_count = 1u32;
             if prefix < self.key.len() {
-                old_count = self.value.unwrap();
-                self.child = Some(Box::new(Node {
-                    key: self.key.split_off(prefix),
-                    value: self.value.take(),
-                    child: self.child.take(),
-                    sibling: None,
-                }));
-                self.key.shrink_to_fit()
+                state = AppendType::NewGayChild;
+            } else if prefix == self.key.len() {
+                state = AppendType::NewStraightChild;
+            } else {
+                panic!("Invalid state.");
             }
-            match self.child {
-                Some(ref mut child) => child.insert_and_count(&key[prefix..]),
-                _ => self.child = Some(Self::boxed(&key[prefix..], 1u32)),
-            }
-            // update self-count
-            self.value = Some(self.value.unwrap_or(old_count) + 1u32);
+        } else if prefix == key.len() {
+            state = AppendType::SameNode;
         } else {
-            // same node!  increment count
-            match self.value {
-                Some(count) => self.value = Some(count + 1u32),
-                _ => panic!("self.value may not be missing"),
-            }
+            panic!("Invalid state.");
+        }
+
+        Node {
+            key: match state {
+                AppendType::NewGayChild => self.key[0..prefix].to_vec(),
+                _ => self.key.clone(),
+            },
+            value: match state {
+                AppendType::NewStraightChild |
+                AppendType::NewGayChild |
+                AppendType::SameNode => Some(self.value.unwrap() + 1u32),
+                _ => self.value.clone(),
+            },
+            child: match state {
+                AppendType::NewGayChild => Some(Rc::new(Node {
+                    key: self.key[prefix..].to_vec(),
+                    value: self.value.clone(),
+                    child: self.child.clone(),
+                    sibling: None,
+                    next: None,
+                }.append(&key[prefix..]))),
+                AppendType::NewStraightChild => match self.child {
+                    Some(ref child) => Some(Rc::new(child.append(&key[prefix..]))),
+                    _ => Some(Self::boxed(&key[prefix..], 1u32)),
+                },
+                _ => self.child.clone(),
+            },
+            sibling: match prefix {
+                0 => match self.sibling {
+                    Some(ref sibling) => Some(Rc::new(sibling.append(key))),
+                    _ => Some(Self::boxed(key, 1u32)),
+                },
+                _ => self.sibling.clone(),
+            },
+            next: None,
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Tree<T> {
-    root: Option<Box<Node<T>>>,
+pub struct Tree {
+    root: Option<Rc<Node<u32>>>,
+    header: Vec<Rc<Node<u32>>>,
 }
 
-impl<T> Tree<T> {
-    pub fn new() -> Tree<T> {
+impl Tree {
+    pub fn new() -> Tree {
         Tree {
             root: None,
+            header: vec![],
         }
     }
 
-    pub fn find<K: AsRef<[u32]>>(&self, key: K) -> Option<&Node<T>> {
+    pub fn find<K: AsRef<[u32]>>(&self, key: K) -> Option<&Node<u32>> {
         self.root.as_ref().and_then(|x| x.find(key))
     }
 
-    pub fn find_mut<K: AsRef<[u32]>>(&mut self, key: K) -> Option<&mut Node<T>> {
-        self.root.as_mut().and_then(|x| x.find_mut(key))
-    }
-
-    fn insert<K: AsRef<[u32]>>(&mut self, key: K, value: T) {
-        match self.root {
-            Some(ref mut root) => root.insert(key, value),
-            _ => self.root = Some(Node::boxed(key.as_ref(), value))
-        }
-    }
-}
-
-impl Tree<u32> {
-    pub fn insert_and_count<K: AsRef<[u32]>>(&mut self, key: K) {
-        // inserting with auto-value
-        match self.root {
-            Some(ref mut root) => root.insert_and_count(key),
-            _ => self.root = Some(Node::boxed(key.as_ref(), 1u32))
+    pub fn append<K: AsRef<[u32]>>(&self, key: K) -> Tree {
+        Tree {
+            root: match self.root {
+                Some(ref root) => Some(Rc::new(root.append(key))),
+                _ => Some(Node::boxed(key.as_ref(), 1u32))
+            },
+            header: vec![],
         }
     }
 }
@@ -163,6 +176,7 @@ impl Tree<u32> {
 #[cfg(test)]
 mod tests {
     use super::{Node, Tree};
+    use std::rc::Rc;
 
     #[test]
     fn test_common_prefix_empty() {
@@ -183,31 +197,38 @@ mod tests {
 
     #[test]
     fn test_find_empty() {
-        let t = Tree::<()> { root: None };
+        let t = Tree { root: None, header: vec![] };
         assert!(t.find([]).is_none());
         assert!(t.find(vec![3u32, 137u32, 2u32]).is_none());
     }
 
-    #[test]
-    fn test_find_mut_empty() {
-        let mut t = Tree::<()> { root: None };
-        assert!(t.find_mut([]).is_none());
-        assert!(t.find_mut(vec![3u32, 137u32, 2u32]).is_none());
-    }
+    // #[test]
+    // fn test_find_mut_empty() {
+    //     let mut t = Tree::<()> { root: None, header: vec![] };
+    //     assert!(t.find_mut([]).is_none());
 
-    fn sample_tree() -> Tree<u32> {
+    //     let mut t = Tree::<()> { root: None, header: vec![] };
+    //     assert!(t.find_mut(vec![3u32, 137u32, 2u32]).is_none());
+    // }
+
+    fn sample_tree() -> Tree {
+        // http://cglab.ca/~abeinges/blah/too-many-lists/book/
+        let child = Rc::new(Node {
+            key: vec![137u32],
+            value: Some(1),
+            child: None,
+            sibling: Some(Node::boxed(vec![0u32], 2)),
+            next: None,
+        });
         Tree {
-            root: Some(Box::new(Node {
+            root: Some(Rc::new(Node {
                 key: vec![3u32, 137u32],
                 value: Some(0),
-                child: Some(Box::new(Node {
-                    key: vec![137u32],
-                    value: Some(1),
-                    child: None,
-                    sibling: Some(Node::boxed(vec![0u32], 2))
-                })),
+                child: Some(child),
                 sibling: Some(Node::boxed(vec![1u32, 2u32, 9u32], 3)),
+                next: None,
             })),
+            header: vec![],
         }
     }
 
@@ -216,150 +237,65 @@ mod tests {
         assert!(sample_tree().find(vec![3u32, 137u32]).unwrap().value == Some(0));
     }
 
-    #[test]
-    fn test_find_mut_simple() {
-        assert!(sample_tree().find_mut(vec![3u32, 137u32]).unwrap().value == Some(0));
-    }
+    // #[test]
+    // fn test_find_mut_simple() {
+    //     assert!(sample_tree().find_mut(vec![3u32, 137u32]).unwrap().value == Some(0));
+    // }
 
     #[test]
     fn test_find_child() {
         assert!(sample_tree().find(vec![3u32, 137u32, 137u32]).unwrap().value == Some(1));
     }
 
-    #[test]
-    fn test_find_mut_child() {
-        assert!(sample_tree().find_mut(vec![3u32, 137u32, 137u32]).unwrap().value == Some(1));
-    }
+    // #[test]
+    // fn test_find_mut_child() {
+    //     assert!(sample_tree().find_mut(vec![3u32, 137u32, 137u32]).unwrap().value == Some(1));
+    // }
 
     #[test]
     fn test_find_sibling() {
         assert!(sample_tree().find(vec![1u32, 2u32, 9u32]).unwrap().value == Some(3));
     }
 
-    #[test]
-    fn test_find_mut_sibling() {
-        assert!(sample_tree().find_mut(vec![1u32, 2u32, 9u32]).unwrap().value == Some(3));
-    }
+    // #[test]
+    // fn test_find_mut_sibling() {
+    //     assert!(sample_tree().find_mut(vec![1u32, 2u32, 9u32]).unwrap().value == Some(3));
+    // }
 
     #[test]
     fn test_find_missing() {
         assert!(sample_tree().find(vec![999u32]).is_none());
     }
 
-    #[test]
-    fn test_find_mut_missing() {
-        assert!(sample_tree().find_mut(vec![999u32]).is_none());
-    }
+    // #[test]
+    // fn test_find_mut_missing() {
+    //     assert!(sample_tree().find_mut(vec![999u32]).is_none());
+    // }
 
     #[test]
     fn test_find_shorter() {
         assert!(sample_tree().find(vec![3u32]).is_none());
     }
 
-    #[test]
-    fn test_find_mut_shorter() {
-        assert!(sample_tree().find_mut(vec![3u32]).is_none());
-    }
+    // #[test]
+    // fn test_find_mut_shorter() {
+    //     assert!(sample_tree().find_mut(vec![3u32]).is_none());
+    // }
 
     #[test]
     fn test_find_longer() {
         assert!(sample_tree().find(vec![3u32, 137u32, 137u32, 137u32]).is_none());
     }
 
-    #[test]
-    fn test_find_mut_longer() {
-        assert!(sample_tree().find_mut(vec![3u32, 137u32, 137u32, 137u32]).is_none());
-    }
+    // #[test]
+    // fn test_find_mut_longer() {
+    //     assert!(sample_tree().find_mut(vec![3u32, 137u32, 137u32, 137u32]).is_none());
+    // }
 
     #[test]
     fn test_insert_empty() {
         let mut t = Tree::new();
-        t.insert(vec![999u32], ());
-        let root = t.root.as_ref().unwrap();
-        assert!(root.key == vec![999u32]);
-        assert!(root.value == Some(()));
-        assert!(root.child.is_none());
-        assert!(root.sibling.is_none());
-    }
-
-    #[test]
-    fn test_insert_append() {
-        let mut t = Tree::new();
-        t.insert(vec![3u32], 0);
-        t.insert(vec![3u32, 137u32], 1);
-        t.insert(vec![3u32, 137u32, 2u32], 2);
-        let foo = t.root.as_ref().unwrap();
-        assert!(foo.key == vec![3u32]);
-        assert!(foo.value == Some(0));
-        assert!(foo.sibling.is_none());
-        let bar = foo.child.as_ref().unwrap();
-        assert!(bar.key == vec![137u32]);
-        assert!(bar.value == Some(1));
-        assert!(bar.sibling.is_none());
-        let baz = bar.child.as_ref().unwrap();
-        assert!(baz.key == vec![2u32]);
-        assert!(baz.value == Some(2));
-        assert!(baz.child.is_none());
-        assert!(baz.sibling.is_none());
-    }
-
-    #[test]
-    fn test_insert_sibling() {
-        let mut t = Tree::new();
-        t.insert(vec![987u32], 0);
-        t.insert(vec![654u32], 1);
-        t.insert(vec![321u32], 2);
-        let foo = t.root.as_ref().unwrap();
-        assert!(foo.key == vec![987u32]);
-        assert!(foo.value == Some(0));
-        assert!(foo.child.is_none());
-        let bar = foo.sibling.as_ref().unwrap();
-        assert!(bar.key == vec![654u32]);
-        assert!(bar.value == Some(1));
-        assert!(bar.child.is_none());
-        let quux = bar.sibling.as_ref().unwrap();
-        assert!(quux.key == vec![321u32]);
-        assert!(quux.value == Some(2));
-        assert!(quux.child.is_none());
-        assert!(quux.sibling.is_none());
-    }
-
-    #[test]
-    fn test_insert_split() {
-        let mut t = Tree::new();
-        t.insert(vec![3u32, 137u32, 2u32], 0);
-        t.insert(vec![3u32, 137u32, 99u32, 22u32], 1);
-        let root = t.root.as_ref().unwrap();
-        assert!(root.key == vec![3u32, 137u32]);
-        assert!(root.value.is_none());
-        assert!(root.sibling.is_none());
-        let foo = root.child.as_ref().unwrap();
-        assert!(foo.key == vec![2u32]);
-        assert!(foo.value == Some(0));
-        assert!(foo.child.is_none());
-        let bar = foo.sibling.as_ref().unwrap();
-        assert!(bar.key == vec![99u32, 22u32]);
-        assert!(bar.value == Some(1));
-        assert!(bar.sibling.is_none());
-        assert!(bar.child.is_none());
-    }
-
-    #[test]
-    fn test_fmt_debug() {
-        println!("{:?}", sample_tree());
-    }
-
-    #[test]
-    fn test_insert_and_count() {
-        let mut t = sample_tree();
-        t.insert_and_count(vec![3u32, 137u32, 137u32, 999u32]);
-        println!("{:?}", t);
-    }
-
-    #[test]
-    fn test_insert_empty_auto_counting() {
-        let mut t = Tree::new();
-        t.insert_and_count(vec![999u32]);
+        t = t.append(vec![999u32]);
         let root = t.root.as_ref().unwrap();
         assert!(root.key == vec![999u32]);
         assert!(root.value == Some(1));
@@ -368,12 +304,11 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_append_auto_counting() {
+    fn test_insert_append() {
         let mut t = Tree::new();
-        t.insert_and_count(vec![3u32]);
-        t.insert_and_count(vec![3u32, 137u32]);
-        t.insert_and_count(vec![3u32, 137u32, 2u32]);
-        println!("after third: {:?}", t);
+        t = t.append(vec![3u32]);
+        t = t.append(vec![3u32, 137u32]);
+        t = t.append(vec![3u32, 137u32, 2u32]);
         let foo = t.root.as_ref().unwrap();
         assert!(foo.key == vec![3u32]);
         assert!(foo.value == Some(3));
@@ -390,11 +325,11 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_sibling_auto_counting() {
+    fn test_insert_sibling() {
         let mut t = Tree::new();
-        t.insert_and_count(vec![987u32]);
-        t.insert_and_count(vec![654u32]);
-        t.insert_and_count(vec![321u32]);
+        t = t.append(vec![987u32]);
+        t = t.append(vec![654u32]);
+        t = t.append(vec![321u32]);
         let foo = t.root.as_ref().unwrap();
         assert!(foo.key == vec![987u32]);
         assert!(foo.value == Some(1));
@@ -411,12 +346,12 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_split_auto_counting() {
+    fn test_insert_split() {
         let mut t = Tree::new();
-        t.insert_and_count(vec![3u32, 137u32, 2u32]);
-        println!("after first: {:?}", t);
-        t.insert_and_count(vec![3u32, 137u32, 99u32, 2u32]);
-        println!("after second: {:?}", t);
+        t = t.append(vec![3u32, 137u32, 2u32]);
+        println!("test_insert_split/pre: {:?}", t);
+        t = t.append(vec![3u32, 137u32, 99u32, 22u32]);
+        println!("test_insert_split/post: {:?}", t);
         let root = t.root.as_ref().unwrap();
         assert!(root.key == vec![3u32, 137u32]);
         assert!(root.value == Some(2));
@@ -426,49 +361,54 @@ mod tests {
         assert!(foo.value == Some(1));
         assert!(foo.child.is_none());
         let bar = foo.sibling.as_ref().unwrap();
-        assert!(bar.key == vec![99u32, 2u32]);
+        assert!(bar.key == vec![99u32, 22u32]);
         assert!(bar.value == Some(1));
         assert!(bar.sibling.is_none());
         assert!(bar.child.is_none());
     }
 
     #[test]
-    fn test_insert_twice_auto_counting() {
+    fn test_fmt_debug() {
+        println!("{:?}", sample_tree());
+    }
+
+    #[test]
+    fn test_insert_twice() {
         let mut t = Tree::new();
-        t.insert_and_count(vec![3u32, 137u32, 2u32]);
-        t.insert_and_count(vec![3u32, 137u32, 2u32]);
+        t = t.append(vec![3u32, 137u32, 2u32]);
+        t = t.append(vec![3u32, 137u32, 2u32]);
         let root = t.root.as_ref().unwrap();
         assert!(root.key == vec![3u32, 137u32, 2u32]);
         assert!(root.value == Some(2));
         assert!(root.sibling.is_none());
     }
 
-    fn sample_apriori_tree() -> Tree<u32> {
-        let mut t: Tree<u32> = Tree::new();
+    fn sample_apriori_tree() -> Tree {
+        let mut t: Tree = Tree::new();
         // total counts are (ordered desc.) [all input vecs in this order]
         // 8: 8 times, 6: 5 times, 2: 5 times, 9: 4 times, 5: 4 times,
         // 4: 4 times, 1: 4 times, 0: 4 times, 7: 3 times, 3: 2 times
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![8, 5, 1, 3]);
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![6, 2, 4, 7]);
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![8, 6, 2, 5, 4, 1]);
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![2, 8, 4, 0, 7]);
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![8, 6, 2, 0]);
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![6, 8, 4, 1]);
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![8, 5, 0]);
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![8, 6, 5, 0, 3]);
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![8, 2]);
-        println!("Building Apriori sample tree:\n{:?}", t);
-        t.insert_and_count(vec![1, 7]);
-        println!("Building Apriori sample tree:\n{:?}", t);
+        println!("NEW Apriori sample tree:\n{:?}", t);
+        t = t.append(vec![8, 5, 1, 3]);
+        println!("+ [8, 5, 1, 3] => {:?}", t);
+        t = t.append(vec![6, 2, 4, 7]);
+        println!("+ [6, 2, 4, 7] => {:?}", t);
+        t = t.append(vec![8, 6, 2, 5, 4, 1]);
+        println!("+ [8, 6, 2, 5, 4, 1] => {:?}", t);
+        t = t.append(vec![2, 8, 4, 0, 7]);
+        println!("+ [2, 8, 4, 0, 7] => {:?}", t);
+        t = t.append(vec![8, 6, 2, 0]);
+        println!("+ [8, 6, 2, 0] => {:?}", t);
+        t = t.append(vec![6, 8, 4, 1]);
+        println!("+ [6, 8, 4, 1] => {:?}", t);
+        t = t.append(vec![8, 5, 0]);
+        println!("+ [8, 5, 0] => {:?}", t);
+        t = t.append(vec![8, 6, 5, 0, 3]);
+        println!("+ [8, 6, 5, 0, 3] => {:?}", t);
+        t = t.append(vec![8, 2]);
+        println!("+ [8, 2] => {:?}", t);
+        t = t.append(vec![1, 7]);
+        println!("+ [1, 7] => {:?}", t);
         t
     }
 
