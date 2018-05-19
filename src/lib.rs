@@ -1,18 +1,19 @@
 use std::rc::Rc;
-use std::ptr;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
+#[derive(PartialEq, Eq, Hash)]
 pub struct Node<T> {
     key: Vec<u32>,
     pub value: Option<T>,
     child: Option<Rc<Node<T>>>,
     sibling: Option<Rc<Node<T>>>,
     next: Option<Rc<Node<T>>>,
-    tree: *const Tree,
+    tree: *mut Tree,
 }
 
 impl<T> Node<T> {
-    pub fn new<K: Into<Vec<u32>>>(key: K, value: T, tree: *const Tree) -> Node<T> {
+    pub fn new<K: Into<Vec<u32>>>(key: K, value: T, tree: *mut Tree) -> Node<T> {
         Node {
             key: key.into(),
             value: Some(value),
@@ -21,10 +22,6 @@ impl<T> Node<T> {
             next: None,
             tree: tree,
         }
-    }
-
-    fn boxed<K: Into<Vec<u32>>>(key: K, value: T, tree: *const Tree) -> Rc<Node<T>> {
-        Rc::new(Self::new(key, value, tree))
     }
 
     fn common_prefix<K: AsRef<[u32]>>(&self, other: K) -> usize {
@@ -59,6 +56,12 @@ enum AppendType {
 }
 
 impl Node<u32> {
+    fn boxed<K: Into<Vec<u32>>>(key: K, value: u32, tree: *mut Tree) -> Rc<Node<u32>> {
+        let n = Rc::new(Self::new(key, value, tree));
+        unsafe { (*tree).index_node(&n) };
+        n
+    }
+
     pub fn append<K: AsRef<[u32]>>(&self, key: K) -> Node<u32> {
         let key = key.as_ref();
         let prefix = self.common_prefix(key);
@@ -91,7 +94,7 @@ impl Node<u32> {
                     child: self.child.clone(),
                     sibling: None,
                     next: None,
-                    tree: ptr::null(),
+                    tree: self.tree,
                 }.append(&key[prefix..]))),
                 AppendType::NewStraightChild => match self.child {
                     Some(ref child) => Some(Rc::new(child.append(&key[prefix..]))),
@@ -107,7 +110,7 @@ impl Node<u32> {
                 _ => self.sibling.clone(),
             },
             next: None,
-            tree: ptr::null(),
+            tree: self.tree,
         }
     }
 }
@@ -115,14 +118,25 @@ impl Node<u32> {
 #[derive(Debug)]
 pub struct Tree {
     root: Option<Rc<Node<u32>>>,
-    header: Vec<Rc<Node<u32>>>,
+    nodeindex: HashMap<u32, HashSet<Rc<Node<u32>>>>,
 }
 
 impl Tree {
     pub fn new() -> Tree {
         Tree {
             root: None,
-            header: vec![],
+            nodeindex: HashMap::new(),
+        }
+    }
+
+    pub fn index_node(&mut self, node: &Rc<Node<u32>>) {
+        let ref key = node.key;
+        for k in key {
+            let nodeindex = &mut self.nodeindex;
+            if !nodeindex.contains_key(k) {
+                nodeindex.insert(k.clone(), HashSet::new());
+            }
+            nodeindex.get_mut(k).unwrap().insert(Rc::clone(node));
         }
     }
 
@@ -141,21 +155,22 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use super::{Node, Tree};
-    use::ptr;
+    use std::ptr;
+    use std::collections::HashSet;
 
     #[test]
     fn test_common_prefix_empty() {
-        assert!(Node::new(vec![3u32, 137u32, 2u32], (), ptr::null()).common_prefix([]) == 0);
+        assert!(Node::new(vec![3u32, 137u32, 2u32], (), ptr::null_mut()).common_prefix([]) == 0);
     }
 
     #[test]
     fn test_common_prefix_short() {
-        assert!(Node::new(vec![3u32, 137u32, 2u32], (), ptr::null()).common_prefix(vec![3u32, 137u32, 8u32, 2u32]) == 2);
+        assert!(Node::new(vec![3u32, 137u32, 2u32], (), ptr::null_mut()).common_prefix(vec![3u32, 137u32, 8u32, 2u32]) == 2);
     }
 
     #[test]
     fn test_find_empty() {
-        let t = Tree { root: None, header: vec![] };
+        let t = Tree::new();
         assert!(t.find([]).is_none());
         assert!(t.find(vec![3u32, 137u32, 2u32]).is_none());
     }
@@ -166,6 +181,20 @@ mod tests {
         t.append(vec![3u32, 137u32, 137u32]);
         t.append(vec![1u32, 2u32, 9u32]);
         t
+    }
+
+    #[test]
+    fn test_sample_tree_nodeindex() {
+        let ref t = sample_tree();
+        let ref ni = t.nodeindex;
+        println!("node index: {:?}", ni);
+        assert!(ni.len() == 5);
+        let nodes_3 = ni.get(&3).unwrap();
+        assert!(nodes_3.len() == 1);
+        let n1 = t.find(vec![3u32, 137u32]).unwrap();
+        println!("n1: {:?}", n1);
+        // assert!(nodes_3.contains(&*n1));
+        // assert!(false);
     }
 
     #[test]
