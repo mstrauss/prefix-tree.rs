@@ -46,6 +46,25 @@ impl<T> Node<T> {
             None
         }
     }
+
+    fn count_key_len(&self) -> (usize, usize) {
+        let mut no_nodes = 1;
+        let mut no_key_el = self.key.len();
+
+        if self.sibling.is_some() {
+            let c = self.sibling.as_ref().unwrap().count_key_len();
+            no_nodes += c.0;
+            no_key_el += c.1;
+        }
+
+        if self.child.is_some() {
+            let c = self.child.as_ref().unwrap().count_key_len();
+            no_nodes += c.0;
+            no_key_el += c.1;
+        }
+
+        return (no_nodes, no_key_el)
+    }
 }
 
 enum AppendType {
@@ -150,6 +169,11 @@ impl Tree {
             _ => Some(Node::boxed(key.as_ref(), 1u32, self)),
         }
     }
+
+    pub fn average_key_len(&self) -> (f64) {
+        let c = self.root.as_ref().unwrap().count_key_len();
+        c.1 as f64/c.0 as f64
+    }
 }
 
 #[cfg(test)]
@@ -195,6 +219,11 @@ mod tests {
         println!("n1: {:?}", n1);
         // assert!(nodes_3.contains(&*n1));
         // assert!(false);
+    }
+
+    #[test]
+    fn test_sample_tree_average_key_len() {
+        assert!(sample_tree().average_key_len() == 2.0);
     }
 
     #[test]
