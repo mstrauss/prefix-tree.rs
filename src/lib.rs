@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::ptr;
 
 #[derive(Debug)]
 pub struct Node<T> {
@@ -6,22 +7,24 @@ pub struct Node<T> {
     pub value: Option<T>,
     child: Option<Rc<Node<T>>>,
     sibling: Option<Rc<Node<T>>>,
-    next: Option<Rc<Node<T>>>
+    next: Option<Rc<Node<T>>>,
+    tree: *const Tree,
 }
 
 impl<T> Node<T> {
-    pub fn new<K: Into<Vec<u32>>>(key: K, value: T) -> Node<T> {
+    pub fn new<K: Into<Vec<u32>>>(key: K, value: T, tree: *const Tree) -> Node<T> {
         Node {
             key: key.into(),
             value: Some(value),
             child: None,
             sibling: None,
             next: None,
+            tree: tree,
         }
     }
 
-    fn boxed<K: Into<Vec<u32>>>(key: K, value: T) -> Rc<Node<T>> {
-        Rc::new(Self::new(key, value))
+    fn boxed<K: Into<Vec<u32>>>(key: K, value: T, tree: *const Tree) -> Rc<Node<T>> {
+        Rc::new(Self::new(key, value, tree))
     }
 
     fn common_prefix<K: AsRef<[u32]>>(&self, other: K) -> usize {
@@ -88,21 +91,23 @@ impl Node<u32> {
                     child: self.child.clone(),
                     sibling: None,
                     next: None,
+                    tree: ptr::null(),
                 }.append(&key[prefix..]))),
                 AppendType::NewStraightChild => match self.child {
                     Some(ref child) => Some(Rc::new(child.append(&key[prefix..]))),
-                    _ => Some(Self::boxed(&key[prefix..], 1u32)),
+                    _ => Some(Self::boxed(&key[prefix..], 1u32, self.tree)),
                 },
                 _ => self.child.clone(),
             },
             sibling: match prefix {
                 0 => match self.sibling {
                     Some(ref sibling) => Some(Rc::new(sibling.append(key))),
-                    _ => Some(Self::boxed(key, 1u32)),
+                    _ => Some(Self::boxed(key, 1u32, self.tree)),
                 },
                 _ => self.sibling.clone(),
             },
             next: None,
+            tree: ptr::null(),
         }
     }
 }
@@ -128,7 +133,7 @@ impl Tree {
     pub fn append<K: AsRef<[u32]>>(&mut self, key: K) {
         self.root = match self.root {
             Some(ref root) => Some(Rc::new(root.append(key))),
-            _ => Some(Node::boxed(key.as_ref(), 1u32)),
+            _ => Some(Node::boxed(key.as_ref(), 1u32, self)),
         }
     }
 }
@@ -136,16 +141,16 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use super::{Node, Tree};
-    use std::rc::Rc;
+    use::ptr;
 
     #[test]
     fn test_common_prefix_empty() {
-        assert!(Node::new(vec![3u32, 137u32, 2u32], ()).common_prefix([]) == 0);
+        assert!(Node::new(vec![3u32, 137u32, 2u32], (), ptr::null()).common_prefix([]) == 0);
     }
 
     #[test]
     fn test_common_prefix_short() {
-        assert!(Node::new(vec![3u32, 137u32, 2u32], ()).common_prefix(vec![3u32, 137u32, 8u32, 2u32]) == 2);
+        assert!(Node::new(vec![3u32, 137u32, 2u32], (), ptr::null()).common_prefix(vec![3u32, 137u32, 8u32, 2u32]) == 2);
     }
 
     #[test]
@@ -156,29 +161,16 @@ mod tests {
     }
 
     fn sample_tree() -> Tree {
-        // http://cglab.ca/~abeinges/blah/too-many-lists/book/
-        let child = Rc::new(Node {
-            key: vec![137u32],
-            value: Some(1),
-            child: None,
-            sibling: Some(Node::boxed(vec![0u32], 2)),
-            next: None,
-        });
-        Tree {
-            root: Some(Rc::new(Node {
-                key: vec![3u32, 137u32],
-                value: Some(0),
-                child: Some(child),
-                sibling: Some(Node::boxed(vec![1u32, 2u32, 9u32], 3)),
-                next: None,
-            })),
-            header: vec![],
-        }
+        let mut t = Tree::new();
+        t.append(vec![3u32, 137u32]);
+        t.append(vec![3u32, 137u32, 137u32]);
+        t.append(vec![1u32, 2u32, 9u32]);
+        t
     }
 
     #[test]
     fn test_find_simple() {
-        assert!(sample_tree().find(vec![3u32, 137u32]).unwrap().value == Some(0));
+        assert!(sample_tree().find(vec![3u32, 137u32]).unwrap().value == Some(2));
     }
 
     #[test]
@@ -188,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_find_sibling() {
-        assert!(sample_tree().find(vec![1u32, 2u32, 9u32]).unwrap().value == Some(3));
+        assert!(sample_tree().find(vec![1u32, 2u32, 9u32]).unwrap().value == Some(1));
     }
 
     #[test]
